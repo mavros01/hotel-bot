@@ -179,9 +179,9 @@ application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(button))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# Запуск Flask сервера
+# Запуск приложения через gunicorn (в продакшене)
 if __name__ == "__main__":
-    logger.info("Запуск Flask сервера...")
+    logger.info("Запуск сервера...")
     # Установка webhook при запуске
     port = int(os.getenv("PORT", 10000))  # Render использует порт 10000 по умолчанию
     webhook_url = f"https://hotel-bot.onrender.com/{TOKEN}"
@@ -198,5 +198,30 @@ if __name__ == "__main__":
         logger.error(f"Ошибка при установке webhook: {str(e)}")
         raise
     
-    # Запускаем Flask сервер
-    app.run(host="0.0.0.0", port=port)
+    # Запускаем Flask через gunicorn, если он доступен, иначе через встроенный сервер
+    try:
+        from gunicorn.app.base import BaseApplication
+
+        class StandaloneApplication(BaseApplication):
+            def __init__(self, app, options=None):
+                self.options = options or {}
+                self.application = app
+                super().__init__()
+
+            def load_config(self):
+                for key, value in self.options.items():
+                    self.cfg.set(key.lower(), value)
+
+            def load(self):
+                return self.application
+
+        options = {
+            "bind": f"0.0.0.0:{port}",
+            "workers": 1,
+            "loglevel": "info",
+        }
+        logger.info("Запуск через gunicorn...")
+        StandaloneApplication(app, options).run()
+    except ImportError:
+        logger.warning("gunicorn не установлен, использую встроенный сервер Flask (не рекомендуется для продакшена)")
+        app.run(host="0.0.0.0", port=port)
