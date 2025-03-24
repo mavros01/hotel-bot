@@ -1,11 +1,21 @@
-import asyncio
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from flask import Flask, request
 
-# Твой токен от BotFather (замени его после сброса!)
-TOKEN = '7870381505:AAHeEF7oEJvpvc-xEJD4Q4F8111dlxWpfYM'
+# Инициализация Flask приложения
+app = Flask(__name__)
+
+# Получение токена из переменной окружения
+TOKEN = os.getenv("TOKEN")
+if not TOKEN:
+    raise ValueError("Токен бота не найден в переменных окружения. Укажи переменную TOKEN.")
+
 # Твой Telegram ID
 YOUR_ID = 198389894
+
+# Инициализация бота
+application = Application.builder().token(TOKEN).build()
 
 # Функция для создания кнопок с оценками от 1 до 10
 def create_rating_keyboard():
@@ -35,7 +45,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Разнообразим описание
     welcome_message = (
         "🌟 Добро пожаловать в гостиницу Олимп! 🌟\n"
-        "Мы очень ценим ваше мнение, скажите, понравилось ли вам у нас.(это займет 1-2 минуты)\n"
+        "Мы очень ценим ваше мнение, скажите, понравилось ли вам у нас (это займёт 1-2 минуты).\n"
         "Давайте начнём с оценки: на сколько вы бы оценили наш отель (от 1 до 10)?\n"
         "Выберите оценку, нажав на кнопку ниже:"
     )
@@ -114,14 +124,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Сохраняем отзыв в файл
-        with open('reviews.txt', 'a', encoding='utf-8') as file:
-            file.write(f"{full_review}\n{'-'*30}\n")
+        try:
+            with open('reviews.txt', 'a', encoding='utf-8') as file:
+                file.write(f"{full_review}\n{'-'*30}\n")
+        except Exception as e:
+            await update.message.reply_text(f"Ошибка при сохранении отзыва в файл: {str(e)}")
         
         # Отправляем тебе отзыв
-        await context.bot.send_message(
-            chat_id=YOUR_ID,
-            text=full_review
-        )
+        try:
+            await context.bot.send_message(
+                chat_id=YOUR_ID,
+                text=full_review
+            )
+        except Exception as e:
+            await update.message.reply_text(f"Ошибка при отправке отзыва: {str(e)}")
         
         # Завершаем опрос
         await update.message.reply_text(
@@ -132,12 +148,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Очищаем данные
         context.user_data.clear()
 
-def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.run_polling()
+# Эндпоинт для webhook
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    application.process_update(update)
+    return "OK", 200
 
-if __name__ == '__main__':
-    main()
+# Главный эндпоинт для проверки работоспособности
+@app.route("/")
+def health():
+    return "Bot is running", 200
+
+# Регистрация обработчиков
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CallbackQueryHandler(button))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+# Запуск Flask сервера
+if __name__ == "__main__":
+    # Установка webhook при запуске
+    port = int(os.getenv("PORT", 10000))  # Render использует порт 10000 по умолчанию
+    webhook_url = f"https://hotel-bot.onrender.com/{TOKEN}"
+    application.bot.set_webhook(url=webhook_url)
+    app.run(host="0.0.0.0", port=port)
